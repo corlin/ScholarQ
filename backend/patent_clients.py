@@ -86,9 +86,10 @@ def format_patent_results(data, source="EPO"):
                     p_data = abs_data.get("p", {})
                     abstract = p_data.get("$", abstract) if isinstance(p_data, dict) else str(p_data)
 
-                # 提取专利号
+                # 提取专利号并添加原文链接
                 doc_number = doc.get("@doc-number", "Unknown ID")
-                results.append(f"【专利号】: EPO-{doc_number}\n【标题】: {title}\n【摘要】: {abstract}")
+                url = f"https://worldwide.espacenet.com/patent/search?q={doc_number}"
+                results.append(f"【专利号】: [EPO-{doc_number}]({url})\n【标题】: {title}\n【摘要】: {abstract}")
                 
         elif source == "USPTO":
             # USPTO 的数据通常是一个列表或者包含 results 的字典
@@ -103,8 +104,8 @@ def format_patent_results(data, source="EPO"):
                 abstract = doc.get("abstractText") or doc.get("abstract") or "无摘要"
                 patent_id = doc.get("patentNumber") or doc.get("documentId") or "Unknown ID"
                 app_date = doc.get("filingDate") or doc.get("appDate") or "Unknown Date"
-                
-                results.append(f"【专利号】: US-{patent_id} (申请日: {app_date})\n【标题】: {title}\n【摘要】: {abstract}")
+                url = f"https://patentcenter.uspto.gov/applications/{patent_id}"
+                results.append(f"【专利号】: [US-{patent_id}]({url}) (申请日: {app_date})\n【标题】: {title}\n【摘要】: {abstract}")
         
         if not results:
             return f"未能精确解析出专利列表，原始返回节选：\n{json.dumps(data, ensure_ascii=False)[:1500]}"

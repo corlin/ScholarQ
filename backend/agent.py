@@ -9,24 +9,34 @@ from backend.s2_client import s2_client
 import langchain_openai.chat_models.base as base
 
 # ---- 解决 DeepSeek 推理模型的多轮对话报错 (Patch) ----
-original_convert_to_dict = base._convert_message_to_dict
-original_convert_from_dict = getattr(base, "_convert_dict_to_message", None)
+import langchain_openai.chat_models.base as base
 
-def patched_convert_message_to_dict(message, *args, **kwargs):
-    d = original_convert_to_dict(message, *args, **kwargs)
-    if isinstance(message, AIMessage) and "reasoning_content" in message.additional_kwargs:
-        d["reasoning_content"] = message.additional_kwargs["reasoning_content"]
-    return d
+# 1. Patch langchain_openai's _convert_message_to_dict
+original_convert_to_dict = getattr(base, "_convert_message_to_dict", None)
 
-base._convert_message_to_dict = patched_convert_message_to_dict
+if original_convert_to_dict:
+    def patched_convert_message_to_dict(message, *args, **kwargs):
+        d = original_convert_to_dict(message, *args, **kwargs)
+        if hasattr(message, "additional_kwargs") and "reasoning_content" in message.additional_kwargs:
+            d["reasoning_content"] = message.additional_kwargs["reasoning_content"]
+        elif d.get("role") == "assistant" and "tool_calls" in d:
+            d["reasoning_content"] = "" # Fallback
+        return d
+    base._convert_message_to_dict = patched_convert_message_to_dict
 
-if original_convert_from_dict:
-    def patched_convert_dict_to_message(_dict, *args, **kwargs):
-        msg = original_convert_from_dict(_dict, *args, **kwargs)
-        if isinstance(msg, AIMessage) and "reasoning_content" in _dict:
-            msg.additional_kwargs["reasoning_content"] = _dict["reasoning_content"]
-        return msg
-    base._convert_dict_to_message = patched_convert_dict_to_message
+# 2. Patch openai's AsyncCompletions.create directly to intercept JSON before it goes out
+import openai
+original_create = openai.resources.chat.completions.AsyncCompletions.create
+
+async def patched_create(self, *args, **kwargs):
+    if "messages" in kwargs:
+        for msg in kwargs["messages"]:
+            if msg.get("role") == "assistant":
+                if "reasoning_content" not in msg:
+                    msg["reasoning_content"] = ""
+    return await original_create(self, *args, **kwargs)
+
+openai.resources.chat.completions.AsyncCompletions.create = patched_create
 # --------------------------------------------------------
 
 load_dotenv()
@@ -58,7 +68,9 @@ async def search_materials_literature(query: str, limit: int = 5) -> str:
             title = p.get('title', 'Unknown Title')
             abstract = p.get('abstract', '无摘要')
             year = p.get('year', 'Unknown Year')
-            result.append(f"【标题】: {title} ({year})\n【摘要】: {abstract}")
+            url = p.get('url', '')
+            url_str = f" [原文链接]({url})" if url else ""
+            result.append(f"【标题】: {title} ({year}){url_str}\n【摘要】: {abstract}")
         return "\n---\n".join(result)
     except Exception as e:
         return f"检索技能调用失败: {str(e)}"
@@ -133,10 +145,11 @@ system_message = """你是一名顶尖的材料学专家和资深专利代理师
 必须确保三个工具都被调用（除非用户明确指定只查某一个库）。
 
 在完成全面检索后，你的回复必须遵循以下结构：
-1. **检索总结**：简述你在文献库、欧局、美局分别查到了什么。
+1. **检索总结**：简述你在文献库、欧局、美局分别查到了什么。在列举具体文献或专利时，必须原样输出并附上检索结果中提供的 `[原文链接](...)`，方便用户点击。
 2. **差异化对比**：提取这三个数据源中最相关的现有技术参数（如温度、时间、掺杂比例等），与用户的方案进行详细的横向对比。
 3. **新颖性/创造性建议**：基于文献和真实专利的反馈，为用户提供专业的专利申请建议。
-请尽量用清晰、有条理的中文进行回复。"""
+
+请尽量用清晰、有条理的中文进行回复。**强制要求：绝不能丢失或省略任何引用内容的【原文链接】！**"""
 
 # 使用 LangGraph 的最佳实践 create_react_agent
 agent_executor = create_react_agent(llm, tools, prompt=system_message)

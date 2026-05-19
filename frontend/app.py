@@ -19,6 +19,9 @@ if "messages" not in st.session_state:
 # Display chat messages from history on app rerun
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
+        if "reasoning_content" in message and message["reasoning_content"]:
+            with st.expander("🤔 Agent 思考过程"):
+                st.markdown(message["reasoning_content"])
         st.markdown(message["content"])
 
 # React to user input
@@ -27,24 +30,65 @@ if prompt := st.chat_input("示例: 我在研究加入5%氧化铝的SiC耐热陶
     st.chat_message("user").markdown(prompt)
     
     # Prepare history for backend
-    history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
+    history = []
+    for m in st.session_state.messages:
+        h = {"role": m["role"], "content": m["content"]}
+        if "reasoning_content" in m:
+            h["reasoning_content"] = m["reasoning_content"]
+        history.append(h)
     
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
     
     with st.chat_message("assistant"):
-        with st.spinner("Agent 正在深度思考并执行文献检索技能...这可能需要一点时间..."):
-            try:
-                response = httpx.post(
-                    f"{API_BASE_URL}/api/chat",
-                    json={"message": prompt, "history": history},
-                    timeout=120.0
-                )
+        status = st.status("Agent 处理中...", expanded=True)
+        reasoning_placeholder = status.empty()
+        message_placeholder = st.empty()
+        reply = ""
+        reasoning_reply = ""
+        
+        try:
+            import json
+            with httpx.stream(
+                "POST",
+                f"{API_BASE_URL}/api/chat/stream",
+                json={"message": prompt, "history": history},
+                timeout=120.0
+            ) as response:
                 if response.status_code == 200:
-                    reply = response.json().get("reply", "无回复")
-                    st.markdown(reply)
-                    st.session_state.messages.append({"role": "assistant", "content": reply})
+                    for line in response.iter_lines():
+                        if not line: continue
+                        try:
+                            data = json.loads(line)
+                            event_type = data.get("type")
+                            event_data = data.get("data")
+                            
+                            if event_type == "tool_start":
+                                status.write(f"⚙️ 开始执行技能: `{event_data}` ...")
+                            elif event_type == "tool_end":
+                                # 可以在这里做一些完成的视觉反馈
+                                pass
+                            elif event_type == "reasoning":
+                                reasoning_reply += event_data
+                                reasoning_placeholder.markdown("*(思考中...)*\n\n" + reasoning_reply + "▌")
+                            elif event_type == "content":
+                                reply += event_data
+                                message_placeholder.markdown(reply + "▌")
+                            elif event_type == "error":
+                                status.error(f"Agent 运行异常: {event_data}")
+                        except json.JSONDecodeError:
+                            pass
+                            
+                    if reasoning_reply:
+                        reasoning_placeholder.markdown("*(思考完成)*\n\n" + reasoning_reply)
+                    message_placeholder.markdown(reply)
+                    status.update(label="处理完成", state="complete", expanded=False)
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": reply,
+                        "reasoning_content": reasoning_reply
+                    })
                 else:
-                    st.error(f"Agent 调用失败: {response.text}")
-            except Exception as e:
-                st.error(f"网络请求异常: {str(e)}。请确保后端 Agent 服务已启动。")
+                    st.error(f"Agent 调用失败 (HTTP {response.status_code}): {response.text}")
+        except Exception as e:
+            st.error(f"网络请求异常: {str(e)}。请确保后端 Agent 服务已启动。")
