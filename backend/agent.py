@@ -63,9 +63,19 @@ async def search_materials_literature(query: str, limit: int = 5) -> str:
     except Exception as e:
         return f"检索技能调用失败: {str(e)}"
 
-async def translate_query_to_english(query: str) -> str:
+async def build_patent_query(query: str) -> str:
     from backend.llm_service import aclient
-    prompt = f"Please translate the following text into English keywords suitable for a patent search query. Output ONLY the English translation, no other text. Text: {query}"
+    prompt = f"""
+    You are an expert patent searcher. Convert the following user request into a broad Boolean query for a patent database.
+    Rules:
+    1. Extract ONLY the essential nouns (e.g., materials, core processes).
+    2. DO NOT include specific numbers or parameters (like 5%, 1500°C), as they make the search too narrow and result in 0 hits.
+    3. Use ' AND ' / ' OR ' operators. You can use quotes for exact phrases.
+    4. Example: If user says "SiC with 5% alumina hot pressed at 1500C", output: (SiC OR "silicon carbide") AND (alumina OR Al2O3) AND "hot press*"
+    5. Output ONLY the query string, no other text.
+    
+    User Request: {query}
+    """
     try:
         MODEL = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
         response = await aclient.chat.completions.create(
@@ -74,10 +84,12 @@ async def translate_query_to_english(query: str) -> str:
             temperature=0.1
         )
         en_query = response.choices[0].message.content.strip()
-        print(f"[Agent Tool] Translated query '{query}' -> '{en_query}'")
+        # Clean up possible markdown artifacts
+        en_query = en_query.replace('```', '').replace('`', '').strip()
+        print(f"[Agent Tool] Built query for '{query}' -> '{en_query}'")
         return en_query
     except Exception as e:
-        print(f"[Agent Tool] Translation failed: {e}")
+        print(f"[Agent Tool] Query build failed: {e}")
         return query
 
 @tool
@@ -87,13 +99,11 @@ async def search_epo_patent(query: str) -> str:
     当用户要求查询欧洲局（欧局、EPO）专利时调用此工具。
     支持任何语言输入，系统将自动使用大模型转换为英文关键词。
     """
-    en_query = await translate_query_to_english(query)
+    en_query = await build_patent_query(query)
     try:
         from backend.patent_clients import epo_client
-        import json
         data = await epo_client.search_patents(en_query)
-        # 简单截断返回，防止上下文超长
-        return f"EPO Search Result for '{en_query}':\n" + json.dumps(data, ensure_ascii=False)[:2000]
+        return f"EPO Search Result for '{en_query}':\n{data}"
     except Exception as e:
         return f"EPO检索失败: {str(e)}"
 
@@ -104,12 +114,11 @@ async def search_uspto_patent(query: str) -> str:
     当用户要求查询美国局（美局、USPTO）专利时调用此工具。
     支持任何语言输入，系统将自动使用大模型转换为英文关键词。
     """
-    en_query = await translate_query_to_english(query)
+    en_query = await build_patent_query(query)
     try:
         from backend.patent_clients import uspto_client
-        import json
         data = await uspto_client.search_patents(en_query)
-        return f"USPTO Search Result for '{en_query}':\n" + json.dumps(data, ensure_ascii=False)[:2000]
+        return f"USPTO Search Result for '{en_query}':\n{data}"
     except Exception as e:
         return f"USPTO检索失败: {str(e)}"
 
@@ -117,12 +126,16 @@ tools = [search_materials_literature, search_epo_patent, search_uspto_patent]
 
 system_message = """你是一名顶尖的材料学专家和资深专利代理师（Agent）。
 你的任务是辅助用户进行专利材料（配方、工艺、结构）的新颖性排查和技术交底书素材挖掘。
-如果用户提出了一个新的材料配方或工艺，你必须**主动调用** `search_materials_literature` 工具来检索现有的学术文献作为现有技术（Prior Art）。
-此外，如果用户请求查询欧洲局（EPO）或美国局（USPTO）的专利，请分别调用 `search_epo_patent` 或 `search_uspto_patent`。
-在回复时：
-1. 首先告诉用户你正在理解其需求。
-2. 提取检索到的文献或专利中的具体参数（如温度、时间、掺杂比例等），与用户的方案进行详细的【差异化对比】。
-3. 为用户提供专业的专利新颖性/创造性建议。
+当用户提出了一个新的材料配方/工艺，或要求检索“专利/论文/现有技术”时，你必须**全面主动**地执行以下步骤：
+1. 调用 `search_materials_literature` 检索学术文献。
+2. 调用 `search_epo_patent` 检索欧洲专利局（EPO）的专利。
+3. 调用 `search_uspto_patent` 检索美国专利局（USPTO）的专利。
+必须确保三个工具都被调用（除非用户明确指定只查某一个库）。
+
+在完成全面检索后，你的回复必须遵循以下结构：
+1. **检索总结**：简述你在文献库、欧局、美局分别查到了什么。
+2. **差异化对比**：提取这三个数据源中最相关的现有技术参数（如温度、时间、掺杂比例等），与用户的方案进行详细的横向对比。
+3. **新颖性/创造性建议**：基于文献和真实专利的反馈，为用户提供专业的专利申请建议。
 请尽量用清晰、有条理的中文进行回复。"""
 
 # 使用 LangGraph 的最佳实践 create_react_agent
