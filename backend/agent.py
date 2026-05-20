@@ -172,13 +172,40 @@ async def get_epo_legal_status(reference_id: str) -> str:
     except Exception as e:
         return f"获取专利 {reference_id} 法律状态失败: {str(e)}"
 
+@tool
+async def get_epo_patent_biblio(reference_id: str) -> str:
+    """
+    Skill: 获取某篇指定欧洲专利的书目数据（Bibliographic Data），包括分类号（CPC/IPC）和其引用的现有技术（Citations/Prior Art）。
+    当你想深度分析该专利的技术领域、追溯其技术源头（前后向引证）时调用此工具。
+    """
+    try:
+        from backend.patent_clients import epo_client
+        return await epo_client.get_patent_biblio(reference_id)
+    except Exception as e:
+        return f"获取专利 {reference_id} 书目信息失败: {str(e)}"
+
+@tool
+async def get_epo_patent_equivalents(reference_id: str) -> str:
+    """
+    Skill: 获取某篇指定欧洲专利的同等专利文献（Equivalents）。
+    当你想补充查找未被同族专利收录的关联等效专利时调用此工具。
+    """
+    try:
+        from backend.patent_clients import epo_client
+        return await epo_client.get_patent_equivalents(reference_id)
+    except Exception as e:
+        return f"获取专利 {reference_id} 同等文献失败: {str(e)}"
+
+
 tools = [
     search_materials_literature, 
     search_epo_patent, 
     search_uspto_patent,
     get_epo_patent_details,
     get_epo_patent_family,
-    get_epo_legal_status
+    get_epo_legal_status,
+    get_epo_patent_biblio,
+    get_epo_patent_equivalents
 ]
 
 system_message = """你是一名顶尖的材料学专家和资深专利代理师（Agent）。
@@ -190,10 +217,11 @@ system_message = """你是一名顶尖的材料学专家和资深专利代理师
 必须确保三个工具都被调用（除非用户明确指定只查某一个库）。
 
 **深度分析（NEW）**：
-如果用户要求详细分析某篇重点欧洲专利（或者你在对比时觉得某篇EPO专利极其相关），请提取其专利号（例如 EPXXXXXXX），并调用以下工具深入挖掘：
+如果用户要求详细分析某篇重点欧洲专利（或者你在对比时觉得某篇EPO专利极其相关），请提取其专利号（例如 EPXXXXXXX），并主动调用以下工具深入挖掘：
+- `get_epo_patent_biblio`: 分析其分类号和引用的现有技术（Citations），这对于查新极具价值。
 - `get_epo_patent_details`: 获取其权利要求（保护范围）和说明书。
 - `get_epo_legal_status`: 检查该专利的最新的法律状态（是否仍有效）。
-- `get_epo_patent_family`: 查询该技术的同族专利全球布局。
+- `get_epo_patent_family` 与 `get_epo_patent_equivalents`: 查询该技术的同族专利和同等文献全球布局。
 
 在完成全面检索和深度分析后，你的回复必须遵循以下结构：
 1. **检索总结**：简述你在各个库中查到了什么，以及你针对重点专利深入挖掘的结果。列举具体文献或专利时，必须原样输出并附上 `[原文链接](...)`。

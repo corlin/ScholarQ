@@ -77,7 +77,8 @@ async def chat_with_agent_stream(request: ChatRequest):
             
             async for event in agent_executor.astream_events(
                 {"messages": messages}, 
-                version="v2"
+                version="v2",
+                config={"recursion_limit": 100}
             ):
                 kind = event["event"]
                 
@@ -121,9 +122,10 @@ async def chat_with_agent(request: ChatRequest):
                 
         # 调用 Agent 执行 (LangGraph 格式)
         messages = chat_history + [HumanMessage(content=request.message)]
-        response = await agent_executor.ainvoke({
-            "messages": messages
-        })
+        response = await agent_executor.ainvoke(
+            {"messages": messages},
+            config={"recursion_limit": 100}
+        )
         
         # 获取最后一条 AI 消息作为回复
         final_message = response["messages"][-1].content

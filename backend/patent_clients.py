@@ -332,6 +332,125 @@ class EPOClient:
                 return f"未找到专利 {reference_id} 的法律事件记录。"
             return f"【{reference_id} 的法律状态事件】:\n" + "\n".join(event_strs[:10])
 
+    @async_retry(max_retries=3, base_delay=2)
+    async def get_patent_biblio(self, reference_id: str):
+        if not self.access_token:
+            await self._get_access_token()
+            
+        logger.info(f"===> [EPO API] Fetching biblio (citations, classifications) for: '{reference_id}'")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            url = f"{self.base_url}/rest-services/published-data/publication/epodoc/{reference_id}/biblio"
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"}
+            )
+            if response.status_code == 401:
+                await self._get_access_token()
+                response = await client.get(url, headers={"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"})
+                
+            if response.status_code == 404:
+                return f"未找到专利 {reference_id} 的书目信息 (404 Not Found)。"
+                
+            response.raise_for_status()
+            data = response.json()
+            
+            exchange_doc = data.get("ops:world-patent-data", {}).get("exchange-documents", {}).get("exchange-document", {})
+            if isinstance(exchange_doc, list) and len(exchange_doc) > 0:
+                exchange_doc = exchange_doc[0]
+            
+            biblio = exchange_doc.get("bibliographic-data", {})
+            
+            classifications = biblio.get("patent-classifications", {}).get("patent-classification", [])
+            if isinstance(classifications, dict):
+                classifications = [classifications]
+            
+            classes = []
+            for cls in classifications:
+                sequence = cls.get("classification-value", {}).get("$", "")
+                if not sequence:
+                    sequence = cls.get("text", {}).get("$", "")
+                if sequence:
+                    classes.append(sequence)
+            
+            citations = biblio.get("references-cited", {}).get("citation", [])
+            if isinstance(citations, dict):
+                citations = [citations]
+                
+            cited_docs = []
+            for cit in citations:
+                doc_number = "Unknown"
+                pub_ref = cit.get("patcit", {}).get("document-id", [])
+                if isinstance(pub_ref, list):
+                    for pr in pub_ref:
+                        if pr.get("@document-id-type") == "epodoc":
+                            doc_number = pr.get("doc-number", {}).get("$", "Unknown")
+                            break
+                elif isinstance(pub_ref, dict):
+                    doc_number = pub_ref.get("doc-number", {}).get("$", "Unknown")
+                    
+                if doc_number != "Unknown":
+                    cited_docs.append(doc_number)
+
+            res = f"【{reference_id} 书目信息分析】\n"
+            if classes:
+                res += f"- **专利分类号 (Classifications)**: {', '.join(classes[:10])}\n"
+            else:
+                res += "- **专利分类号**: 未提取到\n"
+                
+            if cited_docs:
+                res += f"- **引文 (Cited Documents/Prior Art)**:\n"
+                for doc in cited_docs:
+                    res += f"  - {doc}\n"
+            else:
+                res += "- **引文**: 未提取到引文记录\n"
+                
+            return res
+
+    @async_retry(max_retries=3, base_delay=2)
+    async def get_patent_equivalents(self, reference_id: str):
+        if not self.access_token:
+            await self._get_access_token()
+            
+        logger.info(f"===> [EPO API] Fetching equivalents for: '{reference_id}'")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            url = f"{self.base_url}/rest-services/published-data/publication/epodoc/{reference_id}/equivalents"
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"}
+            )
+            if response.status_code == 401:
+                await self._get_access_token()
+                response = await client.get(url, headers={"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"})
+                
+            if response.status_code == 404:
+                return f"未找到专利 {reference_id} 的同等文献信息 (404 Not Found)。"
+                
+            response.raise_for_status()
+            data = response.json()
+            
+            docs = data.get("ops:world-patent-data", {}).get("ops:equivalents-inquiry", {}).get("ops:inquiry-result", [])
+            if not isinstance(docs, list):
+                docs = [docs]
+                
+            res_str = []
+            for doc in docs:
+                pub_ref = doc.get("publication-reference", {}).get("document-id", [])
+                doc_number = "Unknown"
+                if isinstance(pub_ref, list):
+                    for pr in pub_ref:
+                        if pr.get("@document-id-type") == "epodoc":
+                            doc_number = pr.get("doc-number", {}).get("$", "Unknown")
+                            break
+                elif isinstance(pub_ref, dict):
+                    doc_number = pub_ref.get("doc-number", {}).get("$", "Unknown")
+                    
+                if doc_number != "Unknown" and doc_number != reference_id:
+                    res_str.append(f"- {doc_number}")
+                    
+            if not res_str:
+                return f"未找到专利 {reference_id} 的其他同等文献。"
+            return f"【{reference_id} 的同等专利文献 (Equivalents)】:\n" + "\n".join(set(res_str))
+
 class USPTOClient:
     def __init__(self):
         self.base_url = "https://api.uspto.gov/api/v1/patent/applications"
