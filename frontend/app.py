@@ -402,9 +402,20 @@ with st.sidebar:
         # 显示主题（有主题则显示主题，否则回退到 session_id）
         current_topic = st.session_state.get("session_topic", "")
         if current_topic:
-            st.markdown(f"**📌 {current_topic}**")
+            col_topic, col_gen = st.columns([3, 1])
+            with col_topic:
+                st.markdown(f"**📌 {current_topic}**")
+            with col_gen:
+                if st.button("✏️", key="rename_topic", help="重新生成主题"):
+                    st.session_state.session_topic = ""  # 清空以强制重新提取
+                    extract_and_set_topic()
         else:
-            st.caption(f"当前会话: `{st.session_state.get('session_id', 'default')}`")
+            col_topic, col_gen = st.columns([3, 1])
+            with col_topic:
+                st.caption(f"会话: `{st.session_state.get('session_id', 'default')[:8]}`")
+            with col_gen:
+                if st.button("✨", key="gen_topic", help="生成会话主题"):
+                    extract_and_set_topic()
         st.caption(f"消息数: {len(st.session_state.messages)}")
         
         # P2-9: 导出为 Markdown 分析报告
