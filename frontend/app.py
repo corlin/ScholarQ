@@ -27,12 +27,16 @@ def _get_session_file() -> Path:
     return CHAT_HISTORY_DIR / f"session_{st.session_state.session_id}.json"
 
 def save_messages():
-    """将 session_state.messages 持久化到本地 JSON"""
+    """将 session_state.messages 和 topic 持久化到本地 JSON"""
     try:
+        payload = {
+            "topic": st.session_state.get("session_topic", ""),
+            "messages": st.session_state.messages
+        }
         with open(_get_session_file(), "w", encoding="utf-8") as f:
-            json.dump(st.session_state.messages, f, ensure_ascii=False, indent=2)
+            json.dump(payload, f, ensure_ascii=False, indent=2)
     except Exception:
-        pass  # 静默处理持久化失败
+        pass
 
 def load_recent_session():
     """尝试加载最近的一次会话"""
@@ -42,12 +46,44 @@ def load_recent_session():
             with open(files[0], "r", encoding="utf-8") as f:
                 data = json.load(f)
             if data:
-                # 使用该文件对应的 session_id
                 st.session_state.session_id = files[0].stem.replace("session_", "")
-                return data
+                # 兼容新旧格式
+                if isinstance(data, dict) and "messages" in data:
+                    st.session_state.session_topic = data.get("topic", "")
+                    return data["messages"]
+                elif isinstance(data, list):
+                    return data
     except Exception:
         pass
     return []
+
+def _load_session_topic(filepath: Path) -> str:
+    """从会话文件中读取 topic 字段"""
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data.get("topic", "")
+    except Exception:
+        pass
+    return ""
+
+def extract_and_set_topic():
+    """调用后端 LLM 接口提取会话主题"""
+    try:
+        msgs = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages[:4]]
+        resp = httpx.post(
+            f"{API_BASE_URL}/api/chat/extract_topic",
+            json={"messages": msgs},
+            timeout=15.0
+        )
+        if resp.status_code == 200:
+            topic = resp.json().get("topic", "")
+            if topic:
+                st.session_state.session_topic = topic
+                save_messages()
+    except Exception:
+        pass
 
 # ============================================================
 # P0-2: 引用来源结构化提取
@@ -351,12 +387,18 @@ with st.sidebar:
     if st.button("🆕 新建会话", use_container_width=True):
         import uuid
         st.session_state.session_id = str(uuid.uuid4())[:8]
+        st.session_state.session_topic = ""
         st.session_state.messages = []
         save_messages()
         st.rerun()
     
     if st.session_state.messages:
-        st.caption(f"当前会话: `{st.session_state.get('session_id', 'default')}`")
+        # 显示主题（有主题则显示主题，否则回退到 session_id）
+        current_topic = st.session_state.get("session_topic", "")
+        if current_topic:
+            st.markdown(f"**📌 {current_topic}**")
+        else:
+            st.caption(f"当前会话: `{st.session_state.get('session_id', 'default')}`")
         st.caption(f"消息数: {len(st.session_state.messages)}")
         
         # P2-9: 导出为 Markdown 分析报告
@@ -381,7 +423,7 @@ with st.sidebar:
     
     st.divider()
     
-    # 列出历史会话
+    # 列出历史会话（显示主题而非 session_id）
     history_files = sorted(CHAT_HISTORY_DIR.glob("session_*.json"), key=os.path.getmtime, reverse=True)
     if len(history_files) > 1:
         st.subheader("📂 历史会话")
@@ -389,11 +431,19 @@ with st.sidebar:
             sid = hf.stem.replace("session_", "")
             if sid == st.session_state.get("session_id"):
                 continue
+            topic = _load_session_topic(hf)
+            display_name = topic if topic else sid[:8]
             col1, col2 = st.columns([3, 1])
             with col1:
-                if st.button(f"📄 {sid}", key=f"load_{sid}", use_container_width=True):
+                if st.button(f"💬 {display_name}", key=f"load_{sid}", use_container_width=True):
                     with open(hf, "r", encoding="utf-8") as f:
-                        st.session_state.messages = json.load(f)
+                        data = json.load(f)
+                    if isinstance(data, dict) and "messages" in data:
+                        st.session_state.messages = data["messages"]
+                        st.session_state.session_topic = data.get("topic", "")
+                    else:
+                        st.session_state.messages = data
+                        st.session_state.session_topic = ""
                     st.session_state.session_id = sid
                     st.rerun()
             with col2:
@@ -527,6 +577,10 @@ if prompt:
                     
                     # P0-3: 持久化保存
                     save_messages()
+                    
+                    # 首次回复后提取会话主题
+                    if not st.session_state.get("session_topic"):
+                        extract_and_set_topic()
                     
                     # P0-2: 渲染引用来源面板
                     refs = extract_references(reply)

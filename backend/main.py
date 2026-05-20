@@ -146,3 +146,54 @@ async def chat_with_agent(request: ChatRequest):
         return {"reply": final_message}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================
+# 会话主题提取
+# ============================================================
+class TopicRequest(BaseModel):
+    messages: List[ChatMessage] = []
+
+@app.post("/api/chat/extract_topic")
+async def extract_chat_topic(request: TopicRequest):
+    """从对话内容中提取 ≤10 字的会话主题"""
+    import os
+    from backend.llm_service import aclient
+    
+    # 只取前几条消息来提取主题（节省 token）
+    summary_parts = []
+    for msg in request.messages[:4]:
+        role_label = "用户" if msg.role == "user" else "助手"
+        content_snippet = msg.content[:200]
+        summary_parts.append(f"{role_label}: {content_snippet}")
+    
+    conversation_snippet = "\n".join(summary_parts)
+    
+    prompt = f"""请根据以下对话内容，提取一个简短的会话主题描述。
+
+要求：
+1. 必须在 10 个中文字以内
+2. 抓住对话的核心意图（如材料名称、专利分析目标等）
+3. 只输出主题文字，不要加引号或其他标记
+
+对话内容：
+{conversation_snippet}"""
+
+    try:
+        MODEL = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
+        response = await aclient.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": "你是一个标题生成助手，只输出极短的主题摘要。"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,
+            max_tokens=30
+        )
+        topic = response.choices[0].message.content.strip()
+        # 强制截断到 10 字
+        topic = topic.strip('"\'""''').strip()
+        if len(topic) > 10:
+            topic = topic[:10]
+        return {"topic": topic}
+    except Exception as e:
+        return {"topic": "", "error": str(e)}
