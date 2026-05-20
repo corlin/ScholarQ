@@ -72,6 +72,91 @@ def render_references_panel(refs: list[dict]):
             st.markdown(f"**[{i}]** [{ref['title']}]({ref['url']})")
 
 # ============================================================
+# P1-5: 长回复结构化分段渲染
+# ============================================================
+def render_structured_reply(text: str):
+    """将 Agent 的 Markdown 回复按 ## 标题分段渲染到 st.tabs 中。
+    如果不含 ## 段落则直接渲染原文。"""
+    # 按 "## " 拆分段落（保留标题）
+    sections = re.split(r'(?=^## )', text, flags=re.MULTILINE)
+    sections = [s.strip() for s in sections if s.strip()]
+    
+    # 如果只有一个段落或未检测到 ## 标题，直接渲染
+    if len(sections) <= 1 or not any(s.startswith('## ') for s in sections):
+        st.markdown(text)
+        return
+    
+    # 分离：开头没有 ## 的前言 + 有 ## 标题的段落
+    preamble = ""
+    titled_sections = []
+    for s in sections:
+        if s.startswith('## '):
+            lines = s.split('\n', 1)
+            title = lines[0].replace('## ', '').strip()
+            body = lines[1].strip() if len(lines) > 1 else ""
+            titled_sections.append((title, body))
+        else:
+            preamble += s + "\n"
+    
+    # 渲染前言（如果有）
+    if preamble.strip():
+        st.markdown(preamble.strip())
+    
+    # 渲染 tabs
+    if titled_sections:
+        tab_labels = [f"{s[0]}" for s in titled_sections]
+        tabs = st.tabs(tab_labels)
+        for tab, (title, body) in zip(tabs, titled_sections):
+            with tab:
+                st.markdown(body)
+
+# ============================================================
+# P1-6: Follow-up 建议生成与渲染
+# ============================================================
+def generate_followups(reply_text: str) -> list[str]:
+    """根据 Agent 回复内容，智能生成 2~3 条后续建议。
+    策略：提取专利号 → 构造深度分析建议；检测是否涉及对比 → 建议追问。"""
+    suggestions = []
+    
+    # 提取专利号（EP/US/WO/CN 格式）
+    patent_ids = list(set(re.findall(r'\b(EP\d{6,8}[A-Z]?\d?|US\d{7,11}[A-Z]?\d?|WO\d{10,13}[A-Z]?\d?|CN\d{8,12}[A-Z]?)\b', reply_text)))
+    
+    if patent_ids:
+        # 选第一个专利号做深度分析建议
+        pid = patent_ids[0]
+        suggestions.append(f"深入分析 {pid} 的权利要求和说明书")
+        if len(patent_ids) > 1:
+            pid2 = patent_ids[1]
+            suggestions.append(f"查看 {pid2} 的同族专利全球布局")
+    
+    # 通用建议
+    if '新颖性' in reply_text or '创造性' in reply_text:
+        suggestions.append("基于以上分析，帮我起草技术交底书的核心要点")
+    elif '检索' in reply_text:
+        suggestions.append("换一组更具体的关键词重新检索")
+    
+    if not suggestions:
+        suggestions = [
+            "请更详细地对比用户方案与最接近现有技术的区别",
+            "帮我总结可以规避现有专利的改进方向",
+        ]
+    
+    return suggestions[:3]
+
+def render_followup_buttons(suggestions: list[str], key_prefix: str = "followup"):
+    """渲染 Follow-up 建议按钮"""
+    if not suggestions:
+        return
+    st.markdown("---")
+    st.caption("💡 您可能还想了解：")
+    cols = st.columns(len(suggestions))
+    for i, (col, suggestion) in enumerate(zip(cols, suggestions)):
+        with col:
+            if st.button(suggestion, key=f"{key_prefix}_{i}", use_container_width=True):
+                st.session_state._pending_prompt = suggestion
+                st.rerun()
+
+# ============================================================
 # 自定义 CSS — 基本视觉增强
 # ============================================================
 st.markdown("""
@@ -176,16 +261,21 @@ if not st.session_state.messages:
 # ============================================================
 # 显示历史消息
 # ============================================================
-for message in st.session_state.messages:
+for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         if message["role"] == "assistant":
             if "reasoning_content" in message and message["reasoning_content"]:
                 with st.expander("🤔 Agent 思考过程", expanded=False):
                     st.markdown(message["reasoning_content"])
-            st.markdown(message["content"])
+            # P1-5: 结构化分段渲染
+            render_structured_reply(message["content"])
             # P0-2: 渲染引用来源面板
             refs = extract_references(message["content"])
             render_references_panel(refs)
+            # P1-6: 仅最后一条 assistant 消息显示 Follow-up 按钮
+            if idx == len(st.session_state.messages) - 1:
+                followups = generate_followups(message["content"])
+                render_followup_buttons(followups, key_prefix=f"hist_followup_{idx}")
         else:
             st.markdown(message["content"])
 
@@ -274,6 +364,10 @@ if prompt:
                     # P0-2: 渲染引用来源面板
                     refs = extract_references(reply)
                     render_references_panel(refs)
+                    
+                    # P1-6: 渲染 Follow-up 建议
+                    followups = generate_followups(reply)
+                    render_followup_buttons(followups, key_prefix="live_followup")
                     
                 else:
                     st.error(f"Agent 调用失败 (HTTP {response.status_code}): {response.text}")
