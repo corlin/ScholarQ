@@ -92,20 +92,34 @@ def format_patent_results(data, source="EPO"):
                 results.append(f"【专利号】: [EPO-{doc_number}]({url})\n【标题】: {title}\n【摘要】: {abstract}")
                 
         elif source == "USPTO":
-            # USPTO 的数据通常是一个列表或者包含 results 的字典
-            docs = data.get("results", data) if isinstance(data, dict) else data
+            # USPTO ODP API 返回结构: { patentFileWrapperDataBag: [...], recordTotalQuantity: N }
+            docs = data.get("patentFileWrapperDataBag", [])
             if not isinstance(docs, list):
                 docs = [docs]
+            total = data.get("recordTotalQuantity", len(docs))
                 
-            for doc in docs[:10]: # 最多看前10条
+            for doc in docs[:10]:
                 if not isinstance(doc, dict):
                     continue
-                title = doc.get("inventionTitle") or doc.get("title") or "Unknown Title"
-                abstract = doc.get("abstractText") or doc.get("abstract") or "无摘要"
-                patent_id = doc.get("patentNumber") or doc.get("documentId") or "Unknown ID"
-                app_date = doc.get("filingDate") or doc.get("appDate") or "Unknown Date"
-                url = f"https://patentcenter.uspto.gov/applications/{patent_id}"
-                results.append(f"【专利号】: [US-{patent_id}]({url}) (申请日: {app_date})\n【标题】: {title}\n【摘要】: {abstract}")
+                meta = doc.get("applicationMetaData", {})
+                title = meta.get("inventionTitle", "Unknown Title")
+                # applicationNumberText 在顶层而非 applicationMetaData 中
+                app_no = doc.get("applicationNumberText", meta.get("applicationNumberText", "Unknown ID"))
+                app_date = meta.get("filingDate", "Unknown Date")
+                status = meta.get("applicationStatusDescriptionText", "Unknown")
+                applicant = meta.get("firstApplicantName", "Unknown")
+                inventor = meta.get("firstInventorName", "Unknown")
+                url = f"https://patentcenter.uspto.gov/applications/{app_no}"
+                results.append(
+                    f"【申请号】: [US-{app_no}]({url}) (申请日: {app_date})\n"
+                    f"【标题】: {title}\n"
+                    f"【申请人】: {applicant} | 【发明人】: {inventor}\n"
+                    f"【状态】: {status}"
+                )
+            
+            # 在结果前添加总数提示
+            if results and total > len(results):
+                results.insert(0, f"_共找到约 {total} 条匹配专利，以下展示前 {len(results)-1} 条:_")
         
         if not results:
             return f"未能精确解析出专利列表，原始返回节选：\n{json.dumps(data, ensure_ascii=False)[:1500]}"
@@ -455,26 +469,124 @@ class USPTOClient:
     def __init__(self):
         self.base_url = "https://api.uspto.gov/api/v1/patent/applications"
         
+    def _build_query(self, query: str) -> str:
+        """
+        将 LLM 生成的布尔查询转换为 USPTO ODP API 兼容的查询语法。
+        
+        核心策略：USPTO 的 inventionTitle 搜索要求所有 AND 条件都出现在标题中，
+        条件过多会导致零结果。因此最多保留 2-3 个最重要的关键词/短语。
+        """
+        import re
+        
+        # 如果已经是 USPTO 格式的查询，直接返回
+        if "applicationMetaData." in query:
+            return query
+        
+        # Step 1: 全局去掉所有括号
+        clean = query.replace("(", " ").replace(")", " ")
+        
+        # Step 2: 提取引号中的短语，并去掉短语中的通配符
+        raw_phrases = re.findall(r'"([^"]+)"', clean)
+        phrases = [p.strip("*").replace("*", "") for p in raw_phrases]
+        phrases = [p for p in phrases if p.strip()]  # 过滤空短语
+        remaining = re.sub(r'"[^"]+?"', ' ', clean)
+        
+        # Step 3: 拆分剩余部分为独立词，过滤操作符
+        # 注意：保留通配符 *（USPTO OpenSearch 支持独立关键词的通配符）
+        stop_words = {'AND', 'OR', 'NOT'}
+        words = []
+        for w in remaining.split():
+            w = w.strip()
+            # 去掉纯通配符，但保留如 sinter* 这样的带词根通配符
+            bare = w.strip("*")
+            if bare and bare.upper() not in stop_words and len(bare) > 1:
+                words.append(w)  # 保留原始形式（含 *）
+        
+        # Step 4: 智能去重 —— 短语中已包含的词不再单独出现
+        seen_lower = set()
+        # 将短语中的所有单词标记为已见
+        for p in phrases:
+            for pw in p.lower().split():
+                seen_lower.add(pw)
+        
+        # 常见同义词映射（短语存在时，去掉对应缩写）
+        synonym_map = {
+            'sic': 'silicon carbide',
+            'al2o3': 'alumina',
+            'zro2': 'zirconia',
+            'tio2': 'titanium dioxide',
+            'si3n4': 'silicon nitride',
+        }
+        phrase_lower_set = set(p.lower() for p in phrases)
+        
+        unique_words = []
+        for w in words:
+            low = w.lower().strip("*")  # 比较时去掉通配符
+            if low in seen_lower:
+                continue
+            # 如果这个词的同义词已经在短语中，跳过
+            synonym_phrase = synonym_map.get(low, "")
+            if synonym_phrase and synonym_phrase in phrase_lower_set:
+                continue
+            seen_lower.add(low)
+            unique_words.append(w)
+        
+        # Step 5: 构建查询 —— 限制条件数，避免过度限缩
+        # 标题通常很短，最多 2-3 个 AND 条件
+        field = "applicationMetaData.inventionTitle"
+        parts = []
+        
+        # 优先使用短语（最具辨识度）
+        for p in phrases[:2]:
+            encoded_phrase = p.replace(" ", "%20")
+            parts.append(f'{field}:%22{encoded_phrase}%22')
+        
+        # 补充独立关键词，但总条件数不超过 3
+        max_total = 3
+        for w in unique_words:
+            if len(parts) >= max_total:
+                break
+            parts.append(f'{field}:{w}')
+        
+        if not parts:
+            return query
+        
+        return ' AND '.join(parts)
+
     @async_retry(max_retries=2, base_delay=2)
-    async def search_patents(self, query: str):
-        logger.info(f"===> [USPTO API] Searching patents with query: '{query}'")
+    async def search_patents(self, query: str, limit: int = 10):
+        search_query = self._build_query(query)
+        logger.info(f"====> [USPTO API] Searching patents with query: '{search_query}'")
         async with httpx.AsyncClient(timeout=30.0) as client:
             headers = {
                 "X-API-KEY": USPTO_API_KEY,
                 "Accept": "application/json",
-                "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             }
             
-            # 根据 docs/swagger.yaml，/search 是一个 POST 接口，
-            # 且当没有检索到结果时，它会奇葩地返回 404 Not Found 而不是空列表 200 OK。
-            response = await client.post(f"{self.base_url}/search", json={"q": query}, headers=headers)
+            # 手动拼接 URL，避免 httpx params 对 %22 等预编码内容二次编码
+            url = f"{self.base_url}/search?q={search_query}&limit={limit}&offset=0"
             
+            response = await client.get(
+                url,
+                headers=headers
+            )
+            
+            # USPTO API 的坑：查无结果时返回 404 而不是空列表 200
             if response.status_code == 404:
-                logger.info("<=== [USPTO API] Response Status: 404 (No matching records found)")
-                return f"USPTO 未检索到与 '{query}' 完全匹配的专利 (404 No matching records found)。"
+                body = {}
+                try:
+                    body = response.json()
+                except Exception:
+                    pass
+                detail = body.get("detailedMessage", "")
+                if "No matching records" in detail:
+                    logger.info(f"<==== [USPTO API] No results for query: '{search_query}'")
+                    return f"USPTO 未检索到与 '{query}' 匹配的专利，请尝试更宽泛的关键词。"
+                else:
+                    logger.error(f"<==== [USPTO API] True 404: endpoint not found")
+                    return f"USPTO API 端点不可用 (404)，请检查 API 版本。"
                 
-            logger.info(f"<=== [USPTO API] Final Response Status: {response.status_code}")
+            logger.info(f"<==== [USPTO API] Response Status: {response.status_code}")
             response.raise_for_status()
             raw_data = response.json()
             return format_patent_results(raw_data, source="USPTO")
