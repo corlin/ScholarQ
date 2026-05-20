@@ -58,6 +58,19 @@ from backend.agent import agent_executor
 from langchain_core.messages import AIMessage, HumanMessage
 from fastapi.responses import StreamingResponse
 import json
+import time
+
+# 全局工具名映射（覆盖所有 Agent 工具）
+TOOL_NAME_MAP = {
+    "search_materials_literature": "📚 检索学术文献 (Semantic Scholar)",
+    "search_epo_patent": "🇪🇺 检索欧局专利 (EPO)",
+    "search_uspto_patent": "🇺🇸 检索美局专利 (USPTO)",
+    "get_epo_patent_details": "📄 获取专利说明书与权利要求",
+    "get_epo_patent_family": "🌐 查询同族专利布局",
+    "get_epo_legal_status": "⚖️ 查询法律状态",
+    "get_epo_patent_biblio": "🔖 分析书目与引文 (Citations)",
+    "get_epo_patent_equivalents": "🔗 查询同等专利文献",
+}
 
 @app.post("/api/chat/stream")
 async def chat_with_agent_stream(request: ChatRequest):
@@ -75,6 +88,9 @@ async def chat_with_agent_stream(request: ChatRequest):
                     
             messages = chat_history + [HumanMessage(content=request.message)]
             
+            # 用于追踪每个工具调用的起始时间
+            tool_start_times = {}
+            
             async for event in agent_executor.astream_events(
                 {"messages": messages}, 
                 version="v2",
@@ -90,17 +106,14 @@ async def chat_with_agent_stream(request: ChatRequest):
                         yield json.dumps({"type": "reasoning", "data": chunk.additional_kwargs["reasoning_content"]}, ensure_ascii=False) + "\n"
                 elif kind == "on_tool_start":
                     tool_name = event["name"]
-                    # Map tool names to human readable
-                    name_map = {
-                        "search_materials_literature": "检索学术文献",
-                        "search_epo_patent": "检索欧局专利",
-                        "search_uspto_patent": "检索美局专利"
-                    }
-                    human_name = name_map.get(tool_name, tool_name)
+                    tool_start_times[tool_name] = time.time()
+                    human_name = TOOL_NAME_MAP.get(tool_name, tool_name)
                     yield json.dumps({"type": "tool_start", "data": human_name}, ensure_ascii=False) + "\n"
                 elif kind == "on_tool_end":
                     tool_name = event["name"]
-                    yield json.dumps({"type": "tool_end", "data": tool_name}, ensure_ascii=False) + "\n"
+                    human_name = TOOL_NAME_MAP.get(tool_name, tool_name)
+                    elapsed = time.time() - tool_start_times.pop(tool_name, time.time())
+                    yield json.dumps({"type": "tool_end", "data": human_name, "elapsed": round(elapsed, 1)}, ensure_ascii=False) + "\n"
                 
         except Exception as e:
             import traceback
