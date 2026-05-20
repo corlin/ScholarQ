@@ -3,6 +3,7 @@ import httpx
 import os
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -157,21 +158,159 @@ def render_followup_buttons(suggestions: list[str], key_prefix: str = "followup"
                 st.rerun()
 
 # ============================================================
-# 自定义 CSS — 基本视觉增强
+# P2-9: 导出分析报告（Markdown）
+# ============================================================
+def export_as_markdown_report(messages: list[dict]) -> str:
+    """将对话历史转换为结构化 Markdown 报告"""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    report = f"# ScholarQ 专利分析报告\n\n"
+    report += f"> 生成时间: {now}\n\n"
+    report += "---\n\n"
+    
+    for msg in messages:
+        if msg["role"] == "user":
+            report += f"## 🧑 用户提问\n\n{msg['content']}\n\n---\n\n"
+        elif msg["role"] == "assistant":
+            report += f"## 🤖 Agent 分析\n\n{msg['content']}\n\n"
+            refs = extract_references(msg['content'])
+            if refs:
+                report += "### 引用来源\n\n"
+                for i, ref in enumerate(refs, 1):
+                    report += f"{i}. [{ref['title']}]({ref['url']})\n"
+                report += "\n"
+            report += "---\n\n"
+    
+    report += "\n\n*本报告由 ScholarQ 材料专利 Agent 自动生成*\n"
+    return report
+
+# ============================================================
+# P2-10: 重新生成
+# ============================================================
+def render_regenerate_button(key_prefix: str = "regen"):
+    """渲染重新生成按钮"""
+    if st.button("🔄 重新生成", key=f"{key_prefix}_btn", type="secondary"):
+        # 找到最后一条用户消息
+        last_user_msg = None
+        for msg in reversed(st.session_state.messages):
+            if msg["role"] == "user":
+                last_user_msg = msg["content"]
+                break
+        if last_user_msg:
+            # 删除最后一条 assistant 消息
+            if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
+                st.session_state.messages.pop()
+            # 删除最后一条 user 消息（会在下一轮重新添加）
+            if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+                st.session_state.messages.pop()
+            save_messages()
+            st.session_state._pending_prompt = last_user_msg
+            st.rerun()
+
+# ============================================================
+# P2-7: 品牌化视觉主题 — 深蓝 + 琥珀金
 # ============================================================
 st.markdown("""
 <style>
-    /* 聊天消息区微调 */
-    .stChatMessage {
-        border-radius: 12px;
+    /* ---- 全局字体 ---- */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
-    /* 引导卡片样式 */
-    div[data-testid="stHorizontalBlock"] > div > div > button {
+
+    /* ---- 主标题品牌化 ---- */
+    h1 {
+        background: linear-gradient(135deg, #1a365d 0%, #2b6cb0 50%, #d69e2e 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        font-weight: 700 !important;
+        letter-spacing: -0.5px;
+    }
+
+    /* ---- 聊天消息区 ---- */
+    .stChatMessage {
+        border-radius: 14px;
+        transition: box-shadow 0.2s ease;
+    }
+    .stChatMessage:hover {
+        box-shadow: 0 2px 12px rgba(26, 54, 93, 0.08);
+    }
+
+    /* ---- 侧边栏品牌化 ---- */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #1a365d 0%, #0f2440 100%) !important;
+    }
+    [data-testid="stSidebar"] * {
+        color: #e2e8f0 !important;
+    }
+    [data-testid="stSidebar"] .stButton > button {
+        background: rgba(255,255,255,0.08) !important;
+        border: 1px solid rgba(255,255,255,0.15) !important;
+        color: #e2e8f0 !important;
         border-radius: 10px !important;
-        border: 1px solid rgba(49, 51, 63, 0.2) !important;
+        backdrop-filter: blur(8px);
+        transition: all 0.2s ease;
+    }
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background: rgba(214, 158, 46, 0.2) !important;
+        border-color: #d69e2e !important;
+    }
+    [data-testid="stSidebar"] hr {
+        border-color: rgba(255,255,255,0.1) !important;
+    }
+
+    /* ---- 引导卡片 & Follow-up 按钮 ---- */
+    .main .stButton > button {
+        border-radius: 10px !important;
+        border: 1px solid rgba(26, 54, 93, 0.15) !important;
         padding: 0.75rem 1rem !important;
         text-align: left !important;
-        font-size: 0.9rem !important;
+        font-size: 0.88rem !important;
+        transition: all 0.2s ease;
+        background: rgba(26, 54, 93, 0.03) !important;
+    }
+    .main .stButton > button:hover {
+        border-color: #2b6cb0 !important;
+        background: rgba(43, 108, 176, 0.06) !important;
+        transform: translateY(-1px);
+        box-shadow: 0 3px 10px rgba(26, 54, 93, 0.1);
+    }
+
+    /* ---- Tabs 样式 ---- */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 4px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px 8px 0 0;
+        padding: 8px 20px;
+        font-weight: 500;
+    }
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #1a365d, #2b6cb0) !important;
+        color: white !important;
+    }
+
+    /* ---- Status 容器 ---- */
+    [data-testid="stStatusWidget"] {
+        border-radius: 12px;
+        border: 1px solid rgba(26, 54, 93, 0.1);
+    }
+
+    /* ---- Expander ---- */
+    .streamlit-expanderHeader {
+        font-weight: 500;
+        border-radius: 10px;
+    }
+
+    /* ---- 下载按钮特殊样式 ---- */
+    [data-testid="stDownloadButton"] > button {
+        background: linear-gradient(135deg, #d69e2e, #ecc94b) !important;
+        color: #1a365d !important;
+        font-weight: 600 !important;
+        border: none !important;
+    }
+    [data-testid="stDownloadButton"] > button:hover {
+        box-shadow: 0 4px 14px rgba(214, 158, 46, 0.35) !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -193,6 +332,11 @@ if "messages" not in st.session_state:
 # 侧边栏 — 会话管理
 # ============================================================
 with st.sidebar:
+    # 品牌 Logo 区
+    st.markdown("### 🧪 ScholarQ")
+    st.caption("材料专利智能检索分析平台")
+    st.divider()
+    
     st.header("💬 会话管理")
     if st.button("🆕 新建会话", use_container_width=True):
         import uuid
@@ -205,10 +349,20 @@ with st.sidebar:
         st.caption(f"当前会话: `{st.session_state.get('session_id', 'default')}`")
         st.caption(f"消息数: {len(st.session_state.messages)}")
         
-        # 导出当前对话
+        # P2-9: 导出为 Markdown 分析报告
+        report_md = export_as_markdown_report(st.session_state.messages)
+        st.download_button(
+            "📄 导出分析报告 (.md)",
+            data=report_md,
+            file_name=f"scholarq_report_{st.session_state.get('session_id', 'export')}.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
+        
+        # 也保留 JSON 导出
         export_data = json.dumps(st.session_state.messages, ensure_ascii=False, indent=2)
         st.download_button(
-            "📥 导出对话记录 (.json)",
+            "📥 导出原始数据 (.json)",
             data=export_data,
             file_name=f"scholarq_chat_{st.session_state.get('session_id', 'export')}.json",
             mime="application/json",
@@ -272,8 +426,11 @@ for idx, message in enumerate(st.session_state.messages):
             # P0-2: 渲染引用来源面板
             refs = extract_references(message["content"])
             render_references_panel(refs)
-            # P1-6: 仅最后一条 assistant 消息显示 Follow-up 按钮
+            # P1-6 + P2-10: 仅最后一条 assistant 消息显示操作区
             if idx == len(st.session_state.messages) - 1:
+                col_regen, col_spacer = st.columns([1, 4])
+                with col_regen:
+                    render_regenerate_button(key_prefix=f"hist_regen_{idx}")
                 followups = generate_followups(message["content"])
                 render_followup_buttons(followups, key_prefix=f"hist_followup_{idx}")
         else:
@@ -364,6 +521,11 @@ if prompt:
                     # P0-2: 渲染引用来源面板
                     refs = extract_references(reply)
                     render_references_panel(refs)
+                    
+                    # P2-10: 重新生成按钮
+                    col_regen, col_spacer = st.columns([1, 4])
+                    with col_regen:
+                        render_regenerate_button(key_prefix="live_regen")
                     
                     # P1-6: 渲染 Follow-up 建议
                     followups = generate_followups(reply)
