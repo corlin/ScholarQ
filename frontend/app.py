@@ -207,7 +207,7 @@ def render_regenerate_button(key_prefix: str = "regen"):
             st.rerun()
 
 # ============================================================
-# P2-7: 品牌化视觉主题 — 深蓝 + 琥珀金
+# P2-7: 品牌化视觉主题 — 清新明亮（薄荷青 + 浅灰白）
 # ============================================================
 st.markdown("""
 <style>
@@ -217,9 +217,9 @@ st.markdown("""
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
-    /* ---- 主标题品牌化 ---- */
+    /* ---- 主标题 ---- */
     h1 {
-        background: linear-gradient(135deg, #1a365d 0%, #2b6cb0 50%, #d69e2e 100%);
+        background: linear-gradient(135deg, #0d9488 0%, #14b8a6 40%, #2563eb 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;
@@ -227,58 +227,59 @@ st.markdown("""
         letter-spacing: -0.5px;
     }
 
-    /* ---- 聊天消息区 ---- */
+    /* ---- 聊天消息气泡 ---- */
     .stChatMessage {
         border-radius: 14px;
         transition: box-shadow 0.2s ease;
     }
     .stChatMessage:hover {
-        box-shadow: 0 2px 12px rgba(26, 54, 93, 0.08);
+        box-shadow: 0 2px 12px rgba(13, 148, 136, 0.06);
     }
 
-    /* ---- 侧边栏品牌化 ---- */
+    /* ---- 侧边栏（浅色系，不覆盖文字颜色）---- */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #1a365d 0%, #0f2440 100%) !important;
-    }
-    [data-testid="stSidebar"] * {
-        color: #e2e8f0 !important;
+        background: linear-gradient(180deg, #f0fdfa 0%, #f1f5f9 100%) !important;
+        border-right: 1px solid #e2e8f0;
     }
     [data-testid="stSidebar"] .stButton > button {
-        background: rgba(255,255,255,0.08) !important;
-        border: 1px solid rgba(255,255,255,0.15) !important;
-        color: #e2e8f0 !important;
+        background: #ffffff !important;
+        border: 1px solid #d1d5db !important;
         border-radius: 10px !important;
-        backdrop-filter: blur(8px);
         transition: all 0.2s ease;
+        color: #334155 !important;
     }
     [data-testid="stSidebar"] .stButton > button:hover {
-        background: rgba(214, 158, 46, 0.2) !important;
-        border-color: #d69e2e !important;
+        background: #f0fdfa !important;
+        border-color: #0d9488 !important;
+        color: #0d9488 !important;
     }
     [data-testid="stSidebar"] hr {
-        border-color: rgba(255,255,255,0.1) !important;
+        border-color: #e2e8f0 !important;
     }
 
-    /* ---- 引导卡片 & Follow-up 按钮 ---- */
+    /* ---- 主区域按钮（引导卡片 & Follow-up）---- */
     .main .stButton > button {
         border-radius: 10px !important;
-        border: 1px solid rgba(26, 54, 93, 0.15) !important;
+        border: 1px solid #e2e8f0 !important;
         padding: 0.75rem 1rem !important;
         text-align: left !important;
         font-size: 0.88rem !important;
         transition: all 0.2s ease;
-        background: rgba(26, 54, 93, 0.03) !important;
+        background: #ffffff !important;
+        color: #334155 !important;
     }
     .main .stButton > button:hover {
-        border-color: #2b6cb0 !important;
-        background: rgba(43, 108, 176, 0.06) !important;
+        border-color: #14b8a6 !important;
+        background: #f0fdfa !important;
         transform: translateY(-1px);
-        box-shadow: 0 3px 10px rgba(26, 54, 93, 0.1);
+        box-shadow: 0 3px 10px rgba(13, 148, 136, 0.08);
+        color: #0d9488 !important;
     }
 
-    /* ---- Tabs 样式 ---- */
+    /* ---- Tabs 选项卡 ---- */
     .stTabs [data-baseweb="tab-list"] {
         gap: 4px;
+        border-bottom: 2px solid #e2e8f0;
     }
     .stTabs [data-baseweb="tab"] {
         border-radius: 8px 8px 0 0;
@@ -286,14 +287,16 @@ st.markdown("""
         font-weight: 500;
     }
     .stTabs [aria-selected="true"] {
-        background: linear-gradient(135deg, #1a365d, #2b6cb0) !important;
+        background: #0d9488 !important;
         color: white !important;
+        border-radius: 8px 8px 0 0;
     }
 
     /* ---- Status 容器 ---- */
     [data-testid="stStatusWidget"] {
         border-radius: 12px;
-        border: 1px solid rgba(26, 54, 93, 0.1);
+        border: 1px solid #e2e8f0;
+        background: #fafffe;
     }
 
     /* ---- Expander ---- */
@@ -302,15 +305,22 @@ st.markdown("""
         border-radius: 10px;
     }
 
-    /* ---- 下载按钮特殊样式 ---- */
+    /* ---- 下载按钮 ---- */
     [data-testid="stDownloadButton"] > button {
-        background: linear-gradient(135deg, #d69e2e, #ecc94b) !important;
-        color: #1a365d !important;
+        background: linear-gradient(135deg, #0d9488, #14b8a6) !important;
+        color: #ffffff !important;
         font-weight: 600 !important;
         border: none !important;
+        border-radius: 10px !important;
     }
     [data-testid="stDownloadButton"] > button:hover {
-        box-shadow: 0 4px 14px rgba(214, 158, 46, 0.35) !important;
+        box-shadow: 0 4px 14px rgba(13, 148, 136, 0.3) !important;
+        transform: translateY(-1px);
+    }
+
+    /* ---- chat input 美化 ---- */
+    [data-testid="stChatInput"] textarea {
+        border-radius: 12px !important;
     }
 </style>
 """, unsafe_allow_html=True)
