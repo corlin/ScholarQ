@@ -168,32 +168,34 @@ async def extract_chat_topic(request: TopicRequest):
     
     conversation_snippet = "\n".join(summary_parts)
     
-    prompt = f"""请根据以下对话内容，提取一个简短的会话主题描述。
+    prompt = f"""请根据以下对话内容，用 10 个中文字以内总结会话主题。
 
-要求：
-1. 必须在 10 个中文字以内
-2. 抓住对话的核心意图（如材料名称、专利分析目标等）
-3. 只输出主题文字，不要加引号或其他标记
+规则：
+- 直接输出主题，不要加引号、标点或解释
+- 抓住核心意图，如材料名称、分析目标
+- 示例输出格式：SiC陶瓷专利排查
 
 对话内容：
 {conversation_snippet}"""
 
     try:
         MODEL = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
+        print(f"[TopicExtract] Using model={MODEL}, messages_count={len(request.messages)}")
         response = await aclient.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": "你是一个标题生成助手，只输出极短的主题摘要。"},
+                {"role": "system", "content": "你是一个标题生成助手。只输出一个极短的主题词，不超过10个字。"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
-            max_tokens=30
         )
         topic = response.choices[0].message.content.strip()
-        # 强制截断到 10 字
-        topic = topic.strip('"\'""''').strip()
+        # 清洗引号和标点
+        topic = topic.strip('"\'""\u201c\u201d\u2018\u2019\u3001\u3002\uff01').strip()
         if len(topic) > 10:
             topic = topic[:10]
+        print(f"[TopicExtract] Result: '{topic}'")
         return {"topic": topic}
     except Exception as e:
+        print(f"[TopicExtract] Error: {e}")
         return {"topic": "", "error": str(e)}

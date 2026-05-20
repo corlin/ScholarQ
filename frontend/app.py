@@ -69,7 +69,7 @@ def _load_session_topic(filepath: Path) -> str:
     return ""
 
 def extract_and_set_topic():
-    """调用后端 LLM 接口提取会话主题"""
+    """调用后端 LLM 接口提取会话主题，成功后触发 rerun 以更新侧边栏"""
     try:
         msgs = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages[:4]]
         resp = httpx.post(
@@ -78,12 +78,18 @@ def extract_and_set_topic():
             timeout=15.0
         )
         if resp.status_code == 200:
-            topic = resp.json().get("topic", "")
+            result = resp.json()
+            topic = result.get("topic", "")
             if topic:
                 st.session_state.session_topic = topic
                 save_messages()
-    except Exception:
-        pass
+                st.rerun()  # 关键：触发重新渲染以更新侧边栏
+            elif result.get("error"):
+                st.toast(f"主题提取失败: {result['error']}", icon="⚠️")
+        else:
+            st.toast(f"主题提取接口返回 {resp.status_code}", icon="⚠️")
+    except Exception as e:
+        st.toast(f"主题提取异常: {str(e)[:50]}", icon="⚠️")
 
 # ============================================================
 # P0-2: 引用来源结构化提取
