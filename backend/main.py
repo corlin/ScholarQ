@@ -102,7 +102,9 @@ async def chat_with_agent_stream(request: ChatRequest):
                     yield json.dumps({"type": "tool_end", "data": tool_name}, ensure_ascii=False) + "\n"
                 
         except Exception as e:
-            yield json.dumps({"type": "error", "data": str(e)}, ensure_ascii=False) + "\n"
+            import traceback
+            tb_str = traceback.format_exc()
+            yield json.dumps({"type": "error", "data": f"{str(e)}\n\nTraceback:\n{tb_str}"}, ensure_ascii=False) + "\n"
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
 

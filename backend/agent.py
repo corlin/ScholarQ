@@ -134,7 +134,52 @@ async def search_uspto_patent(query: str) -> str:
     except Exception as e:
         return f"USPTO检索失败: {str(e)}"
 
-tools = [search_materials_literature, search_epo_patent, search_uspto_patent]
+@tool
+async def get_epo_patent_details(reference_id: str) -> str:
+    """
+    Skill: 获取某篇指定欧洲专利（如 EP1000000）的详细权利要求书（Claims）和说明书（Description）。
+    当你想深入了解某篇欧局专利的具体技术方案、保护范围时调用此工具。
+    """
+    try:
+        from backend.patent_clients import epo_client
+        claims = await epo_client.get_patent_claims(reference_id)
+        desc = await epo_client.get_patent_description(reference_id)
+        return f"{claims}\n\n{desc}"
+    except Exception as e:
+        return f"获取专利 {reference_id} 详情失败: {str(e)}"
+
+@tool
+async def get_epo_patent_family(reference_id: str) -> str:
+    """
+    Skill: 获取某篇指定欧洲专利的同族专利（Family Members）。
+    当你想了解该技术的全球专利布局和申请国家时调用此工具。
+    """
+    try:
+        from backend.patent_clients import epo_client
+        return await epo_client.get_patent_family(reference_id)
+    except Exception as e:
+        return f"获取专利 {reference_id} 同族失败: {str(e)}"
+
+@tool
+async def get_epo_legal_status(reference_id: str) -> str:
+    """
+    Skill: 获取某篇指定欧洲专利的最新的法律状态事件（Legal Status）。
+    当你想判断该专利是否已授权、是否有效或失效时调用此工具。
+    """
+    try:
+        from backend.patent_clients import epo_client
+        return await epo_client.get_legal_status(reference_id)
+    except Exception as e:
+        return f"获取专利 {reference_id} 法律状态失败: {str(e)}"
+
+tools = [
+    search_materials_literature, 
+    search_epo_patent, 
+    search_uspto_patent,
+    get_epo_patent_details,
+    get_epo_patent_family,
+    get_epo_legal_status
+]
 
 system_message = """你是一名顶尖的材料学专家和资深专利代理师（Agent）。
 你的任务是辅助用户进行专利材料（配方、工艺、结构）的新颖性排查和技术交底书素材挖掘。
@@ -144,10 +189,16 @@ system_message = """你是一名顶尖的材料学专家和资深专利代理师
 3. 调用 `search_uspto_patent` 检索美国专利局（USPTO）的专利。
 必须确保三个工具都被调用（除非用户明确指定只查某一个库）。
 
-在完成全面检索后，你的回复必须遵循以下结构：
-1. **检索总结**：简述你在文献库、欧局、美局分别查到了什么。在列举具体文献或专利时，必须原样输出并附上检索结果中提供的 `[原文链接](...)`，方便用户点击。
-2. **差异化对比**：提取这三个数据源中最相关的现有技术参数（如温度、时间、掺杂比例等），与用户的方案进行详细的横向对比。
-3. **新颖性/创造性建议**：基于文献和真实专利的反馈，为用户提供专业的专利申请建议。
+**深度分析（NEW）**：
+如果用户要求详细分析某篇重点欧洲专利（或者你在对比时觉得某篇EPO专利极其相关），请提取其专利号（例如 EPXXXXXXX），并调用以下工具深入挖掘：
+- `get_epo_patent_details`: 获取其权利要求（保护范围）和说明书。
+- `get_epo_legal_status`: 检查该专利的最新的法律状态（是否仍有效）。
+- `get_epo_patent_family`: 查询该技术的同族专利全球布局。
+
+在完成全面检索和深度分析后，你的回复必须遵循以下结构：
+1. **检索总结**：简述你在各个库中查到了什么，以及你针对重点专利深入挖掘的结果。列举具体文献或专利时，必须原样输出并附上 `[原文链接](...)`。
+2. **差异化对比**：提取最相关的现有技术参数（包括你查到的权利要求保护范围）与用户的方案进行详细的横向对比。
+3. **新颖性/创造性/法律建议**：基于文献、专利实质内容及法律状态反馈，提供申请策略建议。
 
 请尽量用清晰、有条理的中文进行回复。**强制要求：绝不能丢失或省略任何引用内容的【原文链接】！**"""
 

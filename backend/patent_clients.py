@@ -117,6 +117,32 @@ def format_patent_results(data, source="EPO"):
         logger.error(f"解析专利数据失败: {e}")
         return f"解析数据异常，原始数据节选：\n{json.dumps(data, ensure_ascii=False)[:1000]}"
 
+def extract_all_text(data, ignore_keys=None):
+    if ignore_keys is None:
+        ignore_keys = {"@document-id-type", "@system", "@family-id", "@country", "@doc-number", "@kind"}
+    if isinstance(data, dict):
+        if "$" in data:
+            return str(data["$"])
+        texts = []
+        for k, v in data.items():
+            if k in ignore_keys or k.startswith("@"):
+                continue
+            t = extract_all_text(v, ignore_keys)
+            if t and t.strip():
+                texts.append(t.strip())
+        return "\n".join(texts)
+    elif isinstance(data, list):
+        texts = []
+        for item in data:
+            t = extract_all_text(item, ignore_keys)
+            if t and t.strip():
+                texts.append(t.strip())
+        return "\n".join(texts)
+    elif isinstance(data, str):
+        return data
+    else:
+        return str(data) if data else ""
+
 class EPOClient:
     def __init__(self):
         self.base_url = "https://ops.epo.org/3.2"
@@ -176,6 +202,135 @@ class EPOClient:
             response.raise_for_status()
             raw_data = response.json()
             return format_patent_results(raw_data, source="EPO")
+
+    @async_retry(max_retries=3, base_delay=2)
+    async def get_patent_claims(self, reference_id: str):
+        if not self.access_token:
+            await self._get_access_token()
+            
+        logger.info(f"===> [EPO API] Fetching claims for: '{reference_id}'")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            url = f"{self.base_url}/rest-services/published-data/publication/epodoc/{reference_id}/claims"
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"}
+            )
+            if response.status_code == 401:
+                await self._get_access_token()
+                response = await client.get(url, headers={"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"})
+                
+            if response.status_code == 404:
+                return f"未找到专利 {reference_id} 的权利要求信息 (404 Not Found)。"
+                
+            response.raise_for_status()
+            data = response.json()
+            claims_text = extract_all_text(data.get("ops:world-patent-data", {}))
+            return f"【{reference_id} 权利要求】:\n{claims_text[:5000]}"
+            
+    @async_retry(max_retries=3, base_delay=2)
+    async def get_patent_description(self, reference_id: str):
+        if not self.access_token:
+            await self._get_access_token()
+            
+        logger.info(f"===> [EPO API] Fetching description for: '{reference_id}'")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            url = f"{self.base_url}/rest-services/published-data/publication/epodoc/{reference_id}/description"
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"}
+            )
+            if response.status_code == 401:
+                await self._get_access_token()
+                response = await client.get(url, headers={"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"})
+                
+            if response.status_code == 404:
+                return f"未找到专利 {reference_id} 的说明书信息 (404 Not Found)。"
+                
+            response.raise_for_status()
+            data = response.json()
+            desc_text = extract_all_text(data.get("ops:world-patent-data", {}))
+            return f"【{reference_id} 说明书(节选)】:\n{desc_text[:5000]}..."
+
+    @async_retry(max_retries=3, base_delay=2)
+    async def get_patent_family(self, reference_id: str):
+        if not self.access_token:
+            await self._get_access_token()
+            
+        logger.info(f"===> [EPO API] Fetching family for: '{reference_id}'")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            url = f"{self.base_url}/rest-services/family/epodoc/{reference_id}/biblio"
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"}
+            )
+            if response.status_code == 401:
+                await self._get_access_token()
+                response = await client.get(url, headers={"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"})
+                
+            if response.status_code == 404:
+                return f"未找到专利 {reference_id} 的同族信息 (404 Not Found)。"
+                
+            response.raise_for_status()
+            data = response.json()
+            docs = data.get("ops:world-patent-data", {}).get("ops:family-retrieval", {}).get("ops:family-member", [])
+            if not isinstance(docs, list):
+                docs = [docs]
+            
+            res_str = []
+            for doc in docs:
+                pub_ref = doc.get("publication-reference", {}).get("document-id", [])
+                doc_number = "Unknown"
+                if isinstance(pub_ref, list):
+                    for pr in pub_ref:
+                        if pr.get("@document-id-type") == "epodoc":
+                            doc_number = pr.get("doc-number", {}).get("$", "Unknown")
+                            break
+                elif isinstance(pub_ref, dict):
+                    doc_number = pub_ref.get("doc-number", {}).get("$", "Unknown")
+                    
+                if doc_number != "Unknown":
+                    res_str.append(f"- {doc_number}")
+                
+            if not res_str:
+                return f"未解析到专利 {reference_id} 的有效同族编号。"
+            return f"【{reference_id} 的同族专利】:\n" + "\n".join(res_str)
+
+    @async_retry(max_retries=3, base_delay=2)
+    async def get_legal_status(self, reference_id: str):
+        if not self.access_token:
+            await self._get_access_token()
+            
+        logger.info(f"===> [EPO API] Fetching legal status for: '{reference_id}'")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            url = f"{self.base_url}/rest-services/legal-status/epodoc/{reference_id}"
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"}
+            )
+            if response.status_code == 401:
+                await self._get_access_token()
+                response = await client.get(url, headers={"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"})
+                
+            if response.status_code == 404:
+                return f"未找到专利 {reference_id} 的法律状态 (404 Not Found)。"
+                
+            response.raise_for_status()
+            data = response.json()
+            events = data.get("ops:world-patent-data", {}).get("ops:legal-status-retrieval", {}).get("ops:legal-status-data", {}).get("ops:legal-status-event", [])
+            if not isinstance(events, list):
+                events = [events]
+                
+            event_strs = []
+            for ev in events:
+                code = ev.get("ops:event-code", {}).get("$", "")
+                desc = ev.get("ops:event-desc", {}).get("$", "")
+                date = ev.get("ops:event-date", {}).get("$", "")
+                if date or desc:
+                    event_strs.append(f"[{date}] Code: {code} - {desc}")
+            
+            if not event_strs:
+                return f"未找到专利 {reference_id} 的法律事件记录。"
+            return f"【{reference_id} 的法律状态事件】:\n" + "\n".join(event_strs[:10])
 
 class USPTOClient:
     def __init__(self):

@@ -7,7 +7,7 @@ load_dotenv()
 
 st.set_page_config(page_title="ScholarQ: 材料专利 Agent", layout="wide", page_icon="🧪")
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8001")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8001")
 
 st.title("🧪 ScholarQ: 材料专利 Agent")
 st.markdown("基于 **LangChain** 最佳实践构建。我是您的专属专利 Agent，具备**检索技能 (Tools)** 与 **上下文记忆 (Memory)**。您只需一句话告诉我您的研发想法，我将自动检索现有技术并为您排查新颖性。")
