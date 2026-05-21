@@ -17,6 +17,7 @@ dependencies = [
     "langchain-openai",
     "langchain-community",
     "langgraph",
+    "aiosqlite",
 ]
 
 [build-system]

@@ -3,8 +3,11 @@ from pydantic import BaseModel
 from backend.s2_client import s2_client
 from contextlib import asynccontextmanager
 
+from backend.database.db import init_db
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await init_db()
     yield
     await s2_client.close()
 
@@ -199,3 +202,90 @@ async def extract_chat_topic(request: TopicRequest):
     except Exception as e:
         print(f"[TopicExtract] Error: {e}")
         return {"topic": "", "error": str(e)}
+
+# ============================================================
+# 文献采集任务管理 API
+# ============================================================
+from backend.database.models import CollectRequest
+from backend.collector import task_manager
+from backend.database import (
+    search_papers as db_search_papers,
+    search_patents as db_search_patents,
+    get_paper_by_id,
+    get_patent_by_id,
+    get_library_stats,
+)
+
+@app.post("/api/collect")
+async def create_collection_task(request: CollectRequest):
+    """创建采集任务（支持同时采集多个数据源）"""
+    try:
+        tasks = await task_manager.submit_collection(
+            query=request.query,
+            sources=request.sources,
+            limit=request.limit,
+        )
+        return {"message": "采集任务已创建", "tasks": tasks}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/collect/tasks")
+async def list_collection_tasks(limit: int = Query(50, le=200)):
+    """查看所有采集任务"""
+    tasks = await task_manager.get_all_task_statuses(limit)
+    return {"tasks": tasks}
+
+@app.get("/api/collect/tasks/{task_id}")
+async def get_collection_task(task_id: int):
+    """查看单个采集任务详情"""
+    task = await task_manager.get_task_status(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return task
+
+# ============================================================
+# 本地文献库管理 API
+# ============================================================
+
+@app.get("/api/library/papers")
+async def list_local_papers(
+    keyword: str = "",
+    limit: int = Query(20, le=100),
+    offset: int = 0,
+):
+    """查询本地论文库"""
+    return await db_search_papers(keyword=keyword, limit=limit, offset=offset)
+
+@app.get("/api/library/papers/{paper_id}")
+async def get_local_paper(paper_id: int):
+    """获取单篇论文详情"""
+    paper = await get_paper_by_id(paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="论文不存在")
+    return paper
+
+@app.get("/api/library/patents")
+async def list_local_patents(
+    keyword: str = "",
+    source: str = "",
+    limit: int = Query(20, le=100),
+    offset: int = 0,
+):
+    """查询本地专利库（可按 source=EPO/USPTO 过滤）"""
+    return await db_search_patents(
+        keyword=keyword, source=source, limit=limit, offset=offset
+    )
+
+@app.get("/api/library/patents/{patent_id}")
+async def get_local_patent(patent_id: int):
+    """获取单条专利详情"""
+    patent = await get_patent_by_id(patent_id)
+    if not patent:
+        raise HTTPException(status_code=404, detail="专利不存在")
+    return patent
+
+@app.get("/api/library/stats")
+async def library_statistics():
+    """本地数据库统计信息"""
+    return await get_library_stats()
+

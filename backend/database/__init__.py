@@ -1,0 +1,16 @@
+from backend.database.db import (
+    init_db,
+    insert_paper,
+    insert_patent,
+    search_papers,
+    search_patents,
+    get_paper_by_id,
+    get_patent_by_id,
+    get_library_stats,
+    create_collection_task,
+    update_task_status,
+    get_task,
+    get_all_tasks,
+    paper_exists,
+    patent_exists,
+)

@@ -11,3 +11,11 @@ wheels/
 
 # Environment variables
 .env
+
+# Local data storage (DB + PDFs)
+data/
+
+# Temporary and IDE-specific files
+scratch/
+frontend/.chat_history/
+.DS_Store
